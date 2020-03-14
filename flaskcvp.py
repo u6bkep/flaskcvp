@@ -16,7 +16,7 @@
  *  GNU General Public License for more details.
 """
 
-import getpass
+import getpass, json, requests
 from optparse import OptionParser
 
 from flask import Flask, jsonify
