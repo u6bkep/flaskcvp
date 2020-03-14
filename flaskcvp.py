@@ -96,6 +96,26 @@ def getChannel(channel):
     data['users']    = [ getUser(user) for user in channel.users ]
     return data
 
+#adding a route where it will return online users as a JSON
+@app.route('/widget')
+def widget():
+    jsonurl = requests.get("http://" + options.host + ":" + str(options.port) + "/1", verify=False)
+    rawdata = jsonurl.json()
+    data = rawdata['root']['channels']
+    userlist = []
+    for channel in data:
+        usersinfo = channel['users']
+        for userinfo in usersinfo:
+            name = userinfo['name']
+            userlist.append(name)
+    try:
+        #change the name here to your music bot to exclude it from the list
+        userlist.remove("AbdulMaqsood")
+        return jsonify(userlist)
+    except:
+        return jsonify(userlist)
+
+
 @app.route('/<int:srv_id>')
 def getTree(srv_id):
     name = ctl.getConf(srv_id, "registername")
