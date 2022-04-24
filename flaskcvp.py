@@ -15,68 +15,76 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
 """
-
-import getpass, json, requests
+import os
+import getpass
 from optparse import OptionParser
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request, current_app
+from functools import wraps
 
 from mumble.mctl import MumbleCtlBase
 
 DEFAULT_CONNSTRING = 'Meta:tcp -h 127.0.0.1 -p 6502'
 DEFAULT_SLICEFILE  = '/usr/share/slice/Murmur.ice'
+DEFAULT_ICESECRET  = None
 
-parser = OptionParser("""Usage: %prog [options]
+if __name__ == '__main__':
+    parser = OptionParser("""Usage: %prog [options]
 
 This is a minimalistic implementation of a Channel Viewer Protocol provider
 using the Flask Python framework and Mumble-Django's MCTL connection library.
 """)
 
-parser.add_option( "-c", "--connstring",
-    help="connection string to use. Default is '%s'." % DEFAULT_CONNSTRING,
-    default=None
-    )
+    parser.add_option( "-c", "--connstring",
+        help="connection string to use. Default is '%s'." % DEFAULT_CONNSTRING,
+        default=None
+        )
 
-parser.add_option( "-i", "--icesecret",
-    help="Ice secret to use in the connection. Also see --asksecret.",
-    default=None
-    )
+    parser.add_option( "-i", "--icesecret",
+        help="Ice secret to use in the connection. Also see --asksecret.",
+        default=DEFAULT_ICESECRET
+        )
 
-parser.add_option( "-a", "--asksecret",
-    help="Ask for the Ice secret on the shell instead of taking it from the command line.",
-    action="store_true", default=False
-    )
+    parser.add_option( "-a", "--asksecret",
+        help="Ask for the Ice secret on the shell instead of taking it from the command line.",
+        action="store_true", default=False
+        )
 
-parser.add_option( "-s", "--slice",
-    help="path to the slice file. Default is '%s'." % DEFAULT_SLICEFILE,
-    default=None
-    )
+    parser.add_option( "-s", "--slice",
+        help="path to the slice file. Default is '%s'." % DEFAULT_SLICEFILE,
+        default=None
+        )
 
-parser.add_option( "-d", "--debug", 
-    help="Enable error debugging",
-    default=False, action="store_true" )
+    parser.add_option( "-d", "--debug",
+        help="Enable error debugging",
+        default=False, action="store_true" )
 
-parser.add_option( "-H", "--host",
-    help="The IP to bind to. Default is '127.0.0.1'.",
-    default="127.0.0.1"
-    )
+    parser.add_option( "-H", "--host",
+        help="The IP to bind to. Default is '127.0.0.1'.",
+        default="127.0.0.1"
+        )
 
-parser.add_option( "-p", "--port", type="int",
-    help="The port number to bind to. Default is 5000.",
-    default=5000
-    )
+    parser.add_option( "-p", "--port", type="int",
+        help="The port number to bind to. Default is 5000.",
+        default=5000
+        )
 
-options, progargs = parser.parse_args()
+    options, progargs = parser.parse_args()
 
-if options.connstring is None:
-    options.connstring = DEFAULT_CONNSTRING
+    if options.connstring is None:
+        options.connstring = DEFAULT_CONNSTRING
 
-if options.slice is None:
-    options.slice = DEFAULT_SLICEFILE
+    if options.slice is None:
+        options.slice = DEFAULT_SLICEFILE
 
-if options.asksecret or options.icesecret == '':
-    options.icesecret = getpass.getpass( "Ice secret: " )
+    if options.asksecret:
+        options.icesecret = getpass.getpass( "Ice secret: " )
 
+else:
+    class options:
+        connstring = DEFAULT_CONNSTRING
+        slice      = DEFAULT_SLICEFILE
+        icesecret  = DEFAULT_ICESECRET
 
 ctl = MumbleCtlBase.newInstance( options.connstring, options.slice, options.icesecret )
 
@@ -96,37 +104,32 @@ def getChannel(channel):
     data['users']    = [ getUser(user) for user in channel.users ]
     return data
 
-#adding a route where it will return online users as a JSON
-@app.route('/widget')
-def widget():
-    jsonurl = requests.get("http://" + options.host + ":" + str(options.port) + "/1", verify=False)
-    rawdata = jsonurl.json()
-    data = rawdata['root']['channels']
-    userlist = []
-    for channel in data:
-        usersinfo = channel['users']
-        for userinfo in usersinfo:
-            name = userinfo['name']
-            userlist.append(name)
-    try:
-        #change the name here to your music bot to exclude it from the list
-        userlist.remove("AbdulMaqsood")
-        return jsonify(userlist)
-    except:
-        return jsonify(userlist)
+def support_jsonp(f):
+    """Wraps output to JSONP"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        result = f(*args, **kwargs)
+        callback = request.args.get('callback', False)
+        if callback:
+            content = str(callback) + '(' + str(result.data) + ')'
+            return current_app.response_class(content,
+                                              mimetype='application/json')
+        else:
+            return result
+    return decorated_function
 
-
-@app.route('/<int:srv_id>')
+@app.route('/<int:srv_id>', methods=['GET'])
+@support_jsonp
 def getTree(srv_id):
     name = ctl.getConf(srv_id, "registername")
     tree = ctl.getTree(srv_id)
 
     serv = {
+        'x_connecturl': os.environ.get('MURMUR_CONNECT_URL'),
         'id':   srv_id,
         'name': name,
         'root': getChannel(tree)
         }
-
     return jsonify(serv)
 
 @app.route('/')

@@ -172,7 +172,7 @@ def MumbleCtlIce( connstring, slicefile=None, icesecret=None ):
     if   murmurversion == (1, 1, 8):
         return MumbleCtlIce_118( connstring, meta )
 
-    elif murmurversion[:2] == (1, 3):
+    elif ((murmurversion[0] == 1) and (murmurversion[1] >= 3)):
         return MumbleCtlIce_123( connstring, meta )
         #if   murmurversion[2] < 2:
         #    return MumbleCtlIce_120( connstring, meta )
