@@ -24,7 +24,12 @@ else:
 def getVersions():
     """ Generator that yields all available upstream versions. """
     url = 'http://bitbucket.org/Svedrin/mumble-django/raw/tip/.hgtags'
-    from urllib2 import urlopen
+    try:
+        # Python3 compatibility
+        from urllib.request import urlopen
+    except ImportError:
+        # Python2 fallback
+        from urllib2 import urlopen
     webtags = urlopen(url)
     try:
         while True:

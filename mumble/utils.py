@@ -35,13 +35,12 @@ class ObjectInfo( object ):
         self.__dict__ = kwargs
 
     def __str__( self ):
-        return unicode( self )
+        return str(self.__dict__)
 
     def __repr__( self ):
-        return unicode( self )
+        return str(self.__dict__)
 
-    def __unicode__( self ):
-        return unicode( self.__dict__ )
+    # Removed __unicode__ for Python3 compatibility
 
     def __contains__( self, name ):
         return name in self.__dict__

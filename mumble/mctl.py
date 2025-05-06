@@ -45,10 +45,10 @@ class MumbleCtlBase(object):
         rd = re.compile( r'^(\w+\.)*\w+$' )
 
         if rd.match( connstring ):
-            from MumbleCtlDbus import MumbleCtlDbus
+            from .MumbleCtlDbus import MumbleCtlDbus
             ctl = MumbleCtlDbus( connstring )
         else:
-            from MumbleCtlIce import MumbleCtlIce
+            from .MumbleCtlIce import MumbleCtlIce
             ctl = MumbleCtlIce( connstring, slicefile, icesecret )
 
         MumbleCtlBase.cache[connstring] = ctl

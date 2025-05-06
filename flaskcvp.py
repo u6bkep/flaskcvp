@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # kate: space-indent on; indent-width 4; replace-tabs on;
 
@@ -17,9 +17,9 @@
 """
 import os
 import getpass
-from optparse import OptionParser
+import argparse
 
-from flask import Flask, jsonify, request, current_app
+from flask import Flask, jsonify, request, current_app, render_template, send_from_directory
 from functools import wraps
 
 from mumble.mctl import MumbleCtlBase
@@ -27,64 +27,67 @@ from mumble.mctl import MumbleCtlBase
 DEFAULT_CONNSTRING = 'Meta:tcp -h 127.0.0.1 -p 6502'
 DEFAULT_SLICEFILE  = '/usr/share/slice/Murmur.ice'
 DEFAULT_ICESECRET  = None
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 5000
+
+# Environment variable names
+ENV_CONNSTRING = 'MUMBLE_CONNSTRING'
+ENV_ICESECRET = 'MUMBLE_ICESECRET'
+ENV_SLICE = 'MUMBLE_SLICE'
+ENV_HOST = 'FLASKCVP_HOST'
+ENV_PORT = 'FLASKCVP_PORT'
 
 if __name__ == '__main__':
-    parser = OptionParser("""Usage: %prog [options]
+    parser = argparse.ArgumentParser(description="""
+Usage: %(prog)s [options]
 
 This is a minimalistic implementation of a Channel Viewer Protocol provider
 using the Flask Python framework and Mumble-Django's MCTL connection library.
 """)
 
-    parser.add_option( "-c", "--connstring",
-        help="connection string to use. Default is '%s'." % DEFAULT_CONNSTRING,
-        default=None
-        )
-
-    parser.add_option( "-i", "--icesecret",
-        help="Ice secret to use in the connection. Also see --asksecret.",
-        default=DEFAULT_ICESECRET
-        )
-
-    parser.add_option( "-a", "--asksecret",
+    parser.add_argument("-c", "--connstring",
+        help=f"connection string to use. Default is '{DEFAULT_CONNSTRING}'. Can be set with {ENV_CONNSTRING} env var.",
+        default=os.environ.get(ENV_CONNSTRING, DEFAULT_CONNSTRING))
+    parser.add_argument("-i", "--icesecret",
+        help=f"Ice secret to use in the connection. Also see --asksecret. Can be set with {ENV_ICESECRET} env var.",
+        default=os.environ.get(ENV_ICESECRET, DEFAULT_ICESECRET))
+    parser.add_argument("-a", "--asksecret",
         help="Ask for the Ice secret on the shell instead of taking it from the command line.",
-        action="store_true", default=False
-        )
-
-    parser.add_option( "-s", "--slice",
-        help="path to the slice file. Default is '%s'." % DEFAULT_SLICEFILE,
-        default=None
-        )
-
-    parser.add_option( "-d", "--debug",
+        action="store_true", default=False)
+    parser.add_argument("-s", "--slice",
+        dest="slice",
+        help=f"path to the slice file. Default is '{DEFAULT_SLICEFILE}'. Can be set with {ENV_SLICE} env var.",
+        default=os.environ.get(ENV_SLICE, DEFAULT_SLICEFILE))
+    parser.add_argument("-d", "--debug",
         help="Enable error debugging",
-        default=False, action="store_true" )
+        action="store_true", default=False)
+    parser.add_argument("-H", "--host",
+        help=f"The IP to bind to. Default is '{DEFAULT_HOST}'. Can be set with {ENV_HOST} env var.",
+        default=os.environ.get(ENV_HOST, DEFAULT_HOST))
+    parser.add_argument("-p", "--port",
+        type=int,
+        help=f"The port number to bind to. Default is {DEFAULT_PORT}. Can be set with {ENV_PORT} env var.",
+        default=int(os.environ.get(ENV_PORT, DEFAULT_PORT)))
 
-    parser.add_option( "-H", "--host",
-        help="The IP to bind to. Default is '127.0.0.1'.",
-        default="127.0.0.1"
-        )
-
-    parser.add_option( "-p", "--port", type="int",
-        help="The port number to bind to. Default is 5000.",
-        default=5000
-        )
-
-    options, progargs = parser.parse_args()
-
-    if options.connstring is None:
-        options.connstring = DEFAULT_CONNSTRING
-
-    if options.slice is None:
-        options.slice = DEFAULT_SLICEFILE
-
+    args = parser.parse_args()
+    options = args
+    
+    # Only handle the asksecret option as it requires user input
     if options.asksecret:
-        options.icesecret = getpass.getpass( "Ice secret: " )
-
+        options.icesecret = getpass.getpass("Ice secret: ")
 else:
     class options:
-        connstring = DEFAULT_CONNSTRING
-        slice      = DEFAULT_SLICEFILE
-        icesecret  = DEFAULT_ICESECRET
+        connstring = os.environ.get(ENV_CONNSTRING, DEFAULT_CONNSTRING)
+        slice = os.environ.get(ENV_SLICE, DEFAULT_SLICEFILE)
+        icesecret = os.environ.get(ENV_ICESECRET, DEFAULT_ICESECRET)
+        host = os.environ.get(ENV_HOST, DEFAULT_HOST)
+        port = int(os.environ.get(ENV_PORT, DEFAULT_PORT))
+
+print("Using connection string: ", options.connstring)
+print("Using slice file: ", options.slice)
+print("Using Ice secret: ", options.icesecret)
+print("Using host: ", options.host)
+print("Using port: ", options.port)
 
 ctl = MumbleCtlBase.newInstance( options.connstring, options.slice, options.icesecret )
 
@@ -111,7 +114,9 @@ def support_jsonp(f):
         result = f(*args, **kwargs)
         callback = request.args.get('callback', False)
         if callback:
-            content = str(callback) + '(' + str(result.data) + ')'
+            # Python3: decode response data as text
+            data = result.get_data(as_text=True)
+            content = f"{callback}({data})"
             return current_app.response_class(content,
                                               mimetype='application/json')
         else:

@@ -18,16 +18,16 @@
 
 from time        import time
 from functools   import wraps
-from StringIO    import StringIO
+from io          import BytesIO
 from os.path     import exists, join
 from os          import unlink, name as os_name
 from PIL         import Image
 from struct      import pack, unpack
 from zlib        import compress, decompress, error
 
-from mctl import MumbleCtlBase
+from .mctl import MumbleCtlBase
 
-from utils import ObjectInfo
+from .utils import ObjectInfo
 
 import Ice, IcePy, tempfile
 
@@ -68,11 +68,11 @@ def protectDjangoErrPage( func ):
     """
 
     @wraps(func)
-    def protection_wrapper( self, *args, **kwargs ):
+    def protection_wrapper(self, *args, **kwargs):
         """ Call the original function and catch Ice exceptions. """
         try:
             return func( self, *args, **kwargs )
-        except Ice.Exception, err:
+        except Ice.Exception as err:
             raise err
     protection_wrapper.innerfunc = func
 
@@ -101,9 +101,11 @@ def MumbleCtlIce( connstring, slicefile=None, icesecret=None ):
     ice = Ice.initialize(idd)
 
     if icesecret:
-        ice.getImplicitContext().put( "secret", icesecret.encode("utf-8") )
+        ice.getImplicitContext().put( "secret", icesecret )
 
-    prx = ice.stringToProxy( connstring.encode("utf-8") )
+    print("Using connection string: %s" % connstring)
+
+    prx = ice.stringToProxy( connstring )
 
     try:
         prx.ice_ping()
@@ -111,7 +113,7 @@ def MumbleCtlIce( connstring, slicefile=None, icesecret=None ):
         raise EnvironmentError( "Murmur does not appear to be listening on this address (Ice ping failed)." )
 
     try:
-        import Murmur
+        import MumbleServer
     except ImportError:
         # Try loading the Slice from Murmur directly via its getSlice method.
         # See scripts/testdynamic.py in Mumble's Git repository.
@@ -140,7 +142,7 @@ def MumbleCtlIce( connstring, slicefile=None, icesecret=None ):
         else:
             if os_name == "nt":
                 # It weren't Windows if it didn't need to be treated differently. *sigh*
-                temppath = join( tempfile.gettempdir(), "Murmur.ice" )
+                temppath = join( tempfile.gettempdir(), "MumbleServer.ice" )
                 slicetemp = open( temppath, "w+b" )
                 try:
                     slicetemp.write( slice )
@@ -163,26 +165,18 @@ def MumbleCtlIce( connstring, slicefile=None, icesecret=None ):
                 finally:
                     slicetemp.close()
 
-        import Murmur
+        import MumbleServer
 
-    meta = Murmur.MetaPrx.checkedCast(prx)
+    meta = MumbleServer.MetaPrx.checkedCast(prx)
 
     murmurversion = meta.getVersion()[:3]
 
-    if   murmurversion == (1, 1, 8):
+    if murmurversion >= (1, 5, 0):
+        return MumbleCtlIce_150(connstring, meta)
+    elif murmurversion == (1, 1, 8):
         return MumbleCtlIce_118( connstring, meta )
-
     elif ((murmurversion[0] == 1) and (murmurversion[1] >= 3)):
         return MumbleCtlIce_123( connstring, meta )
-        #if   murmurversion[2] < 2:
-        #    return MumbleCtlIce_120( connstring, meta )
-
-        #elif murmurversion[2] == 2:
-        #    return MumbleCtlIce_122( connstring, meta )
-
-        #elif murmurversion[2] >= 3:
-        #    return MumbleCtlIce_123( connstring, meta )
-
     raise NotImplementedError( "No ctl object available for Murmur version %d.%d.%d" % tuple(murmurversion) )
 
 
@@ -223,9 +217,9 @@ class MumbleCtlIce_118(MumbleCtlBase):
         for user in users:
             ret[user.playerid] = ObjectInfo(
                 userid =     int( user.playerid ),
-                name   = unicode( user.name,  "utf8" ),
-                email  = unicode( user.email, "utf8" ),
-                pw     = unicode( user.pw,    "utf8" )
+                name   = user.name.decode( "utf8" ),
+                email  = user.email.decode( "utf8" ),
+                pw     = user.pw.decode( "utf8" )
                 )
 
         return ret
@@ -395,9 +389,9 @@ class MumbleCtlIce_118(MumbleCtlBase):
             raise ValueError( "No Texture has been set." )
         # this returns a list of bytes.
         try:
-            decompressed = decompress( texture )
-        except error, err:
-            raise ValueError( err )
+            decompressed = decompress(texture)
+        except error as err:
+            raise ValueError(err)
         # iterate over 4 byte chunks of the string
         imgdata = ""
         for idx in range( 0, len(decompressed), 4 ):
@@ -408,19 +402,18 @@ class MumbleCtlIce_118(MumbleCtlBase):
             bgra = unpack( "4B", decompressed[idx:idx+4] )
             imgdata += pack( "4B",  bgra[2], bgra[1], bgra[0], bgra[3] )
 
-        # return an 600x60 RGBA image object created from the data
-        return Image.fromstring( "RGBA", ( 600, 60 ), imgdata )
+        # return a 600x60 RGBA image object created from the data
+        return Image.frombytes("RGBA", (600, 60), imgdata)
 
     @protectDjangoErrPage
     def setTexture(self, srvid, mumbleid, infile):
         # open image, convert to RGBA, and resize to 600x60
         img = infile.convert( "RGBA" ).transform( ( 600, 60 ), Image.EXTENT, ( 0, 0, 600, 60 ) )
         # iterate over the list and pack everything into a string
-        bgrastring = ""
-        for ent in list( img.getdata() ):
-            # ent is in RGBA format, but Murmur wants BGRA (ARGB inverse), so stuff needs
-            # to be reordered when passed to pack()
-            bgrastring += pack( "4B",  ent[2], ent[1], ent[0], ent[3] )
+        # Python 3: use bytes for binary data
+        bgrastring = b""
+        for ent in img.getdata():
+            bgrastring += pack("4B", ent[2], ent[1], ent[0], ent[3])
         # compress using zlib
         compressed = compress( bgrastring )
         # pack the original length in 4 byte big endian, and concat the compressed
@@ -441,7 +434,10 @@ class MumbleCtlIce_118(MumbleCtlBase):
             for key in data.keys():
                 ret[MumbleCtlIce_118.setUnicodeFlag(key)] = MumbleCtlIce_118.setUnicodeFlag(data[key])
         else:
-            ret = unicode(data, 'utf-8')
+            if isinstance(data, bytes):
+                ret = data.decode('utf-8')
+            else:
+                ret = str(data)
 
         return ret
 
@@ -521,7 +517,7 @@ class MumbleCtlIce_120(MumbleCtlIce_118):
         for id in users:
             ret[id] = ObjectInfo(
                 userid = id,
-                name   = unicode( users[id],  "utf8" ),
+                name   = users[id].decode( "utf8" ),
                 email  = '',
                 pw     = ''
                 )
@@ -639,7 +635,7 @@ class MumbleCtlIce_120(MumbleCtlIce_118):
     @protectDjangoErrPage
     def addBan(self, srvid, **kwargs):
         for key in kwargs:
-            if isinstance( kwargs[key], unicode ):
+            if isinstance(kwargs[key], str):
                 kwargs[key] = kwargs[key].encode("UTF-8")
 
         from Murmur import Ban
@@ -680,7 +676,7 @@ class MumbleCtlIce_122(MumbleCtlIce_120):
 
     @protectDjangoErrPage
     def setTexture(self, srvid, mumbleid, infile):
-        buf = StringIO()
+        buf = BytesIO()
         infile.save( buf, "PNG" )
         buf.seek(0)
         self._getIceServerObject(srvid).setTexture(mumbleid, buf.read())
@@ -700,19 +696,123 @@ class MumbleCtlIce_123(MumbleCtlIce_120):
     def getTexture(self, srvid, mumbleid):
         texture = self.getRawTexture(srvid, mumbleid)
         if len(texture) == 0:
-            raise ValueError( "No Texture has been set." )
-        from StringIO import StringIO
+            raise ValueError("No Texture has been set.")
+        from io import BytesIO
         try:
-            return Image.open( StringIO( texture ) )
-        except IOError, err:
-            raise ValueError( err )
+            return Image.open(BytesIO(texture))
+        except IOError as err:
+            raise ValueError(err)
 
     @protectDjangoErrPage
     def setTexture(self, srvid, mumbleid, infile):
-        buf = StringIO()
-        infile.save( buf, "PNG" )
+        buf = BytesIO()
+        infile.save(buf, "PNG")
         buf.seek(0)
         self._getIceServerObject(srvid).setTexture(mumbleid, buf.read())
+
+    @protectDjangoErrPage
+    def getUptime(self, srvid):
+        return self._getIceServerObject(srvid).getUptime()
+
+
+class MumbleCtlIce_150(MumbleCtlIce_120):
+    """Mumble 1.5+ Ice interface support using MumbleServer slice."""
+    def __init__(self, connstring, meta):
+        super().__init__(connstring, meta)
+
+    @protectDjangoErrPage
+    def getRegisteredPlayers(self, srvid, filter = ''):
+        users = self._getIceServerObject(srvid).getRegisteredUsers(filter)
+        ret = {}
+        for id, name in users.items():
+            ret[id] = ObjectInfo(userid=id, name=name, email='', pw='')
+        return ret
+
+    @protectDjangoErrPage
+    def getPlayers(self, srvid):
+        users = self._getIceServerObject(srvid).getUsers()
+        ret = {}
+        for session, user in users.items():
+            ret[session] = ObjectInfo(
+                session=user.session,
+                userid=user.userid,
+                mute=user.mute,
+                deaf=user.deaf,
+                suppress=user.suppress,
+                selfMute=user.selfMute,
+                selfDeaf=user.selfDeaf,
+                channel=user.channel,
+                name=user.name,
+                onlinesecs=user.onlinesecs,
+                bytespersec=user.bytespersec
+            )
+        return ret
+
+    @protectDjangoErrPage
+    def registerPlayer(self, srvid, name, email, password):
+        import MumbleServer
+        userinfo = {
+            MumbleServer.UserInfo.UserName: name,
+            MumbleServer.UserInfo.UserEmail: email,
+            MumbleServer.UserInfo.UserPassword: password
+        }
+        return self._getIceServerObject(srvid).registerUser(userinfo)
+
+    @protectDjangoErrPage
+    def unregisterPlayer(self, srvid, userid):
+        self._getIceServerObject(srvid).unregisterUser(userid)
+
+    @protectDjangoErrPage
+    def getRegistration(self, srvid, userid):
+        import MumbleServer
+        reg = self._getIceServerObject(srvid).getRegistration(userid)
+        user = ObjectInfo(userid=userid, name="", email="", comment="", hash="", pw="")
+        if MumbleServer.UserInfo.UserName in reg:
+            user.name = reg[MumbleServer.UserInfo.UserName]
+        if MumbleServer.UserInfo.UserEmail in reg:
+            user.email = reg[MumbleServer.UserInfo.UserEmail]
+        if MumbleServer.UserInfo.UserComment in reg:
+            user.comment = reg[MumbleServer.UserInfo.UserComment]
+        if MumbleServer.UserInfo.UserHash in reg:
+            user.hash = reg[MumbleServer.UserInfo.UserHash]
+        return user
+
+    @protectDjangoErrPage
+    def setRegistration(self, srvid, userid, name, email, password):
+        import MumbleServer
+        userinfo = {
+            MumbleServer.UserInfo.UserName: name,
+            MumbleServer.UserInfo.UserEmail: email,
+            MumbleServer.UserInfo.UserPassword: password
+        }
+        return self._getIceServerObject(srvid).updateRegistration(userid, userinfo)
+
+    @protectDjangoErrPage
+    def getACL(self, srvid, channelid):
+        return self._getIceServerObject(srvid).getACL(channelid)
+
+    @protectDjangoErrPage
+    def setACL(self, srvid, channelid, acls, groups, inherit):
+        return self._getIceServerObject(srvid).setACL(channelid, acls, groups, inherit)
+
+    @protectDjangoErrPage
+    def getBans(self, srvid):
+        return self._getIceServerObject(srvid).getBans()
+
+    @protectDjangoErrPage
+    def setBans(self, srvid, bans):
+        return self._getIceServerObject(srvid).setBans(bans)
+
+    @protectDjangoErrPage
+    def getTexture(self, srvid, userid):
+        return self._getIceServerObject(srvid).getTexture(userid)
+
+    @protectDjangoErrPage
+    def setTexture(self, srvid, userid, infile):
+        buf = BytesIO()
+        infile.save(buf, "PNG")
+        buf.seek(0)
+        self._getIceServerObject(srvid).setTexture(userid, buf.read())
 
     @protectDjangoErrPage
     def getUptime(self, srvid):

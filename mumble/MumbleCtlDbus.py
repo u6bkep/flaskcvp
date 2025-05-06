@@ -20,8 +20,8 @@ from PIL    import Image
 from struct    import pack, unpack
 from zlib    import compress, decompress
 
-from mctl    import MumbleCtlBase
-from utils    import ObjectInfo
+from .mctl import MumbleCtlBase
+from .utils import ObjectInfo
 
 import dbus
 from dbus.exceptions import DBusException
@@ -52,7 +52,7 @@ class MumbleCtlDbus_118(MumbleCtlBase):
 
     def _getDbusServerObject( self, srvid):
         if srvid not in self.getBootedServers():
-            raise SystemError, 'No murmur process with the given server ID (%d) is running and attached to system dbus under %s.' % ( srvid, self.meta )
+            raise SystemError('No murmur process with the given server ID (%d) is running and attached to system dbus under %s.' % (srvid, self.meta))
 
         return dbus.Interface( dbus.SystemBus().get_object( self.dbus_base, '/%d' % srvid ), 'net.sourceforge.mumble.Murmur' )
 
@@ -126,11 +126,11 @@ class MumbleCtlDbus_118(MumbleCtlBase):
         ret = {}
 
         for channel in chans:
-            ret[ channel[0] ] = ObjectInfo(
-                id     = int(channel[0]),
-                name   = unicode(channel[1]),
-                parent = int(channel[2]),
-                links  = [ int(lnk) for lnk in channel[3] ],
+            ret[channel[0]] = ObjectInfo(
+                id=int(channel[0]),
+                name=str(channel[1]),
+                parent=int(channel[2]),
+                links=[int(lnk) for lnk in channel[3]],
                 )
 
         return ret
@@ -141,18 +141,18 @@ class MumbleCtlDbus_118(MumbleCtlBase):
         ret = {}
 
         for playerObj in players:
-            ret[ int(playerObj[0]) ] = ObjectInfo(
-                session      =  int( playerObj[0] ),
-                mute         = bool( playerObj[1] ),
-                deaf         = bool( playerObj[2] ),
-                suppress     = bool( playerObj[3] ),
-                selfMute     = bool( playerObj[4] ),
-                selfDeaf     = bool( playerObj[5] ),
-                channel      =  int( playerObj[6] ),
-                userid       =  int( playerObj[7] ),
-                name         = unicode( playerObj[8] ),
-                onlinesecs   =  int( playerObj[9] ),
-                bytespersec  =  int( playerObj[10] )
+            ret[int(playerObj[0])] = ObjectInfo(
+                session=int(playerObj[0]),
+                mute=bool(playerObj[1]),
+                deaf=bool(playerObj[2]),
+                suppress=bool(playerObj[3]),
+                selfMute=bool(playerObj[4]),
+                selfDeaf=bool(playerObj[5]),
+                channel=int(playerObj[6]),
+                userid=int(playerObj[7]),
+                name=str(playerObj[8]),
+                onlinesecs=int(playerObj[9]),
+                bytespersec=int(playerObj[10])
                 )
 
         return ret
@@ -163,10 +163,10 @@ class MumbleCtlDbus_118(MumbleCtlBase):
 
         for user in users:
             ret[int(user[0])] = ObjectInfo(
-                userid =     int( user[0] ),
-                name   = unicode( user[1] ),
-                email  = unicode( user[2] ),
-                pw     = unicode( user[3] )
+                userid=int(user[0]),
+                name=str(user[1]),
+                email=str(user[2]),
+                pw=str(user[3])
                 )
 
         return ret
@@ -174,20 +174,20 @@ class MumbleCtlDbus_118(MumbleCtlBase):
     def getACL(self, srvid, channelid):
         raw_acls, raw_groups, raw_inherit = self._getDbusServerObject(srvid).getACL(channelid)
 
-        acls =  [ ObjectInfo(
-                applyHere = bool(rule[0]),
-                applySubs = bool(rule[1]),
-                inherited = bool(rule[2]),
-                userid    =  int(rule[3]),
-                group     = unicode(rule[4]),
-                allow     =  int(rule[5]),
-                deny      =  int(rule[6]),
+        acls = [ObjectInfo(
+                applyHere=bool(rule[0]),
+                applySubs=bool(rule[1]),
+                inherited=bool(rule[2]),
+                userid=int(rule[3]),
+                group=str(rule[4]),
+                allow=int(rule[5]),
+                deny=int(rule[6]),
                 )
             for rule in raw_acls
             ]
 
         groups = [ ObjectInfo(
-                name        = unicode(group[0]),
+                name        = str(group[0]),
                 inherited   = bool(group[1]),
                 inherit     = bool(group[2]),
                 inheritable = bool(group[3]),
@@ -226,10 +226,10 @@ class MumbleCtlDbus_118(MumbleCtlBase):
     def getRegistration(self, srvid, mumbleid):
         user = self._getDbusServerObject(srvid).getRegistration(dbus.Int32(mumbleid))
         return ObjectInfo(
-            userid = mumbleid,
-            name   = unicode(user[1]),
-            email  = unicode(user[2]),
-            pw     = '',
+            userid=mumbleid,
+            name=str(user[1]),
+            email=str(user[2]),
+            pw='',
             )
 
     def setRegistration(self, srvid, mumbleid, name, email, password):
@@ -245,44 +245,44 @@ class MumbleCtlDbus_118(MumbleCtlBase):
         # this returns a list of bytes.
         # first 4 bytes: Length of uncompressed string, rest: compressed data
         orig_len = ( texture[0] << 24 ) | ( texture[1] << 16 ) | ( texture[2] << 8 ) | ( texture[3] )
-        # convert rest to string and run decompress
-        bytestr = ""
+        # convert rest to bytes and run decompress
+        bytestr = b""
         for byte in texture[4:]:
             bytestr += pack( "B", int(byte) )
         decompressed = decompress( bytestr )
-        # iterate over 4 byte chunks of the string
-        imgdata = ""
+        # iterate over 4 byte chunks of the decompressed data
+        imgdata = b""
         for idx in range( 0, orig_len, 4 ):
             # read 4 bytes = BGRA and convert to RGBA
             bgra = unpack( "4B", decompressed[idx:idx+4] )
-            imgdata += pack( "4B",  bgra[2], bgra[1], bgra[0], bgra[3] )
-
+            imgdata += pack( "4B", bgra[2], bgra[1], bgra[0], bgra[3] )
         # return an 600x60 RGBA image object created from the data
-        return Image.fromstring( "RGBA", ( 600, 60 ), imgdata)
+        return Image.frombytes("RGBA", (600, 60), imgdata)
 
     def setTexture(self, srvid, mumbleid, infile):
         # open image, convert to RGBA, and resize to 600x60
-        img = infile.convert( "RGBA" ).transform( ( 600, 60 ), Image.EXTENT, ( 0, 0, 600, 60 ) )
-        # iterate over the list and pack everything into a string
-        bgrastring = ""
-        for ent in list( img.getdata() ):
+        img = infile.convert("RGBA").transform((600, 60), Image.EXTENT, (0, 0, 600, 60))
+        # iterate over the list and pack everything into bytes
+        bgrastring = b""
+        for ent in img.getdata():
             # ent is in RGBA format, but Murmur wants BGRA (ARGB inverse), so stuff needs
             # to be reordered when passed to pack()
-            bgrastring += pack( "4B",  ent[2], ent[1], ent[0], ent[3] )
+            bgrastring += pack("4B", ent[2], ent[1], ent[0], ent[3])
         # compress using zlib
         compressed = compress( bgrastring )
         # pack the original length in 4 byte big endian, and concat the compressed
         # data to it to emulate qCompress().
-        texture = pack( ">L", len(bgrastring) ) + compressed
+        texture = pack(">L", len(bgrastring)) + compressed
         # finally call murmur and set the texture
-        self._getDbusServerObject(srvid).setTexture(dbus.Int32( mumbleid ), texture)
+        self._getDbusServerObject(srvid).setTexture(dbus.Int32(mumbleid), texture)
 
     def verifyPassword( self, srvid, username, password ):
         player = self.getRegisteredPlayers( srvid, username )
         if not player:
             return -2
 
-        plid = player.values()[0].userid
+        # Python3: dict_values is not subscriptable, use iterator
+        plid = next(iter(player.values())).userid
 
         ok = MumbleCtlDbus_118.convertDbusTypeToNative(
             self._getDbusServerObject(srvid).verifyPassword( dbus.Int32( plid ), password )
@@ -362,7 +362,7 @@ class MumbleCtlDbus_118(MumbleCtlBase):
             if data.__class__ is dbus.Boolean:
                 ret = bool(data)
             elif data.__class__  is dbus.String:
-                ret = unicode(data)
+                ret = str(data)
             elif data.__class__  is dbus.Int32 or data.__class__ is dbus.UInt32:
                 ret = int(data)
             elif data.__class__ is dbus.Byte:
